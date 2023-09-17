@@ -2,7 +2,7 @@ const express = require("express");
 
 (async () => {
   const app = express();
-  const port = process.env.PORT || 9090;
+  const port = process.env.PORT || 80;
 
   app.use(express.static("./"));
 

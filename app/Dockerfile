@@ -1,15 +1,15 @@
-FROM cimg/node:18.12
+FROM node:18.12
 
 # Copy source code to working directory
-COPY . /home/circleci/project/
+COPY . /home/project/
 
-RUN cd /home/circleci/project/
+WORKDIR /home/project/
 
 # Install dependencies
-RUN sudo npm install
+RUN npm install
 
-# Expose port 9090
-EXPOSE 9090
+# Expose port 80
+EXPOSE 80
 
 # Run app at container launch
 CMD ["npm", "start"]
