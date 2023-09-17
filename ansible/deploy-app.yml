@@ -1,0 +1,15 @@
+- name: "Deploy latest app"
+  hosts: management[0]
+  user: ubuntu
+  gather_facts: false
+  become: yes
+  tasks:
+    - name: Update the deployment to run the latest Build
+      shell: "./bin/kubectl set image deployments/hello-world-deployment hello-world-app=walterclementsjr/hello-world:latest"
+      args:
+        chdir: $HOME
+
+    - name: Check if deployment is successful
+      shell: "./bin/kubectl rollout status deployments/hello-world-deployment"
+      args:
+        chdir: $HOME

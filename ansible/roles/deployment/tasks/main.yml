@@ -1,0 +1,16 @@
+- name: Copy deployment configuration
+  copy:
+    src: "deployment.yml"
+    dest: $HOME
+
+- name: Apply deployment configuration
+  shell: "./bin/kubectl apply -f deployment.yml"
+  args:
+    chdir: $HOME
+
+- name: export deployment details
+  shell: |
+    d_output=$(./bin/kubectl get deployments)
+    curl https://kvdb.io/bucket-url/deployment -d "${d_output}"
+  args:
+    chdir: $HOME

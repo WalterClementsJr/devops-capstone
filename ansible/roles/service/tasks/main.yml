@@ -1,0 +1,17 @@
+- name: Copy service configuration
+  copy:
+    src: "service.yml"
+    dest: $HOME
+
+- name: Create service configuration
+  command: "./bin/kubectl apply -f service.yml"
+  args:
+    chdir: $HOME
+
+- name: print service configuration
+  shell: |
+    # export output of kubectl to kvdb
+    s_output=$(./bin/kubectl get services)
+    curl https://kvdb.io/bucket-url/service -d "${s_output}"
+  args:
+    chdir: $HOME
