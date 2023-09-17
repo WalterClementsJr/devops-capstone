@@ -10,6 +10,8 @@ log.txt
 npm-debug.log*
 
 HELP.md
+!bin/.gitkeep
+bin/
 
 .idea/
 .ionic/
