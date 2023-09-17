@@ -1,0 +1,55 @@
+Description: Creates two individual hosts to manage the EKS-Cluster
+
+Parameters:
+  EnvironmentName:
+    Description: An Environment name that will be prefixed to resources
+    Default: capstone
+    Type: String
+  KeyPairName:
+    Description: SSH key for management access
+    Default: udacity
+    Type: String
+  imageId:
+    Description: AMI Image ID
+    Default: ami-0261755bbcb8c4a84
+    Type: String
+
+Resources:
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-management-SG
+      GroupDescription: Allow port 22 SSH
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  managementHost1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SecurityGroups:
+        - Ref: InstanceSecurityGroup
+      KeyName: !Ref KeyPairName
+      ImageId: !Ref imageId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-management1
+        - Key: Project
+          Value: !Ref EnvironmentName
+
+  managementHost2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SecurityGroups:
+        - Ref: InstanceSecurityGroup
+      KeyName: !Ref KeyPairName
+      ImageId: !Ref imageId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-management2
+        - Key: Project
+          Value: !Ref EnvironmentName

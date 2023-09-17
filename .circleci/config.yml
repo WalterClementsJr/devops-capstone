@@ -1,0 +1,269 @@
+version: 2.1
+
+executors:
+  nodejs:
+    docker:
+      - image: cimg/node:18.12
+  aws:
+    docker:
+      - image: amazon/aws-cli
+  python:
+    docker:
+      - image: python:3.10-alpine
+
+orbs:
+  docker: circleci/docker@2.2.0
+  aws-cli: circleci/aws-cli@4.0.0
+
+commands:
+  destroy-eks:
+    description: Destroy EKS stacks
+    parameters:
+      when:
+        type: string
+      id:
+        type: string
+    steps:
+      - run:
+          name: Destroy management instances
+          command: |
+            aws cloudformation delete-stack \
+              --stack-name udacity-capstone-eks-management-<< parameters.id >> \
+          when: << parameters.when >>
+      - run:
+          name: Destroy cluster
+          command: |
+            aws cloudformation delete-stack \
+              --stack-name udacity-capstone-eks-cluster
+            # aws eks delete-cluster --name hello-world-cluster
+          when: << parameters.when >>
+      - run:
+          name: Destroy nodegroup
+          command: |
+            aws cloudformation delete-stack \
+              --stack-name udacity-capstone-eks-nodegroup-<< parameters.id >>
+          when: << parameters.when >>
+      - run:
+          name: Destroy networks
+          command: |
+            aws cloudformation delete-stack \
+              --stack-name udacity-capstone-eks-network-<< parameters.id >> \
+          when: << parameters.when >>
+
+jobs:
+  integration:
+    executor: nodejs
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            make install
+      - run:
+          name: Run lint
+          command: |
+            make lint
+
+  deploy-infrastructure:
+    executor: aws-cli/default
+    steps:
+      - checkout
+      - aws-cli/setup
+      - run:
+          name: Ensure EKS network exists
+          command: |
+            aws cloudformation deploy \
+              --region ${AWS_DEFAULT_REGION} \
+              --template-file cloudformation/network.yml \
+              --tags project="udacity-capstone" \
+              --stack-name "udacity-capstone-eks-network-${CIRCLE_WORKFLOW_ID}" \
+              --parameter-overrides file://cloudformation/network-parameters.json
+      - run:
+          name: Ensure EKS Cluster exists
+          command: |
+            aws cloudformation deploy \
+              --region ${AWS_DEFAULT_REGION} \
+              --template-file cloudformation/cluster.yml \
+              --tags project="udacity-capstone" \
+              --stack-name "udacity-capstone-eks-cluster" \
+              --parameter-overrides file://cloudformation/cluster-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM
+          no_output_timeout: 15m
+      - run:
+          name: Ensure Nodegroup exists
+          command: |
+            aws cloudformation deploy \
+              --region ${AWS_DEFAULT_REGION} \
+              --template-file cloudformation/nodegroup.yml \
+              --tags project=udacity-capstone \
+              --stack-name "udacity-capstone-eks-nodegroup-${CIRCLE_WORKFLOW_ID}" \
+              --parameter-overrides file://cloudformation/nodegroup-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM
+      - run:
+          name: Ensure management instances exists
+          command: |
+            aws cloudformation deploy \
+              --region ${AWS_DEFAULT_REGION} \
+              --template-file cloudformation/management.yml \
+              --tags project="udacity-capstone-eks-management-${CIRCLE_WORKFLOW_ID}" \
+              --stack-name "udacity-capstone-eks-management-${CIRCLE_WORKFLOW_ID}" \
+              --parameter-overrides file://cloudformation/management-parameters.json \
+              --output text >> ~/deployLogs.txt
+            cat ~/deployLogs.txt
+      - run:
+          name: Extract the IPs of the management instances for Ansible
+          command: |
+            echo [management] > ~/inventory.txt
+            aws ec2 describe-instances \
+              --region ${AWS_DEFAULT_REGION} \
+              --query 'Reservations[*].Instances[*].PublicIpAddress' \
+              --filters "Name=tag:project,Values=udacity-capstone-eks-management-${CIRCLE_WORKFLOW_ID}" \
+              --output text >> ~/inventory.txt
+            cat ~/inventory.txt
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - inventory.txt
+            - deployLogs.txt
+      - destroy-eks:
+          id: ${CIRCLE_WORKFLOW_ID}
+          when: on_fail
+
+  configure-infrastructure:
+    executor: python
+    steps:
+      - checkout
+      - aws-cli/setup
+      - add_ssh_keys:
+          fingerprints:
+            - "96:49:d4:d1:f4:af:c9:72:93:f1:9f:5a:ff:c3:a1:7e"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+      - run:
+          name: Configure server
+          command: |
+            if grep -q "No changes to deploy" ~/deployLogs.txt
+              then
+                cat ~/inventory.txt
+                echo "Management instances are already configured."
+            else
+              cat ~/inventory.txt
+              cd ansible
+              ansible-playbook -i ~/inventory.txt configure-server.yml
+            fi
+      - destroy-eks:
+          id: ${CIRCLE_WORKFLOW_ID}
+          when: on_fail
+
+  configure-cluster:
+    executor: python
+    steps:
+      - checkout
+      - aws-cli/setup
+      - add_ssh_keys:
+          fingerprints:
+            - "96:49:d4:d1:f4:af:c9:72:93:f1:9f:5a:ff:c3:a1:7e"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+      - run:
+          name: Configure server
+          command: |
+            if grep -q "No changes to deploy" ~/deployLogs.txt
+              then
+                cat ~/inventory.txt
+                echo "Our management instances are already configured."
+            else
+              cat ~/inventory.txt
+              cd ansible
+              ansible-playbook -i ~/inventory.txt configure-cluster.yml
+            fi
+      - run:
+          name: Wait for LoadBalancer's domain to become reachable
+          command: |
+            if grep -q "No changes to deploy" ~/deployLogs.txt
+              then
+                cat ~/inventory.txt
+                echo "Management instances are already configured."
+            else
+              cat ~/inventory.txt
+              echo "Wait 60 seconds..."
+              sleep 60
+            fi
+      - run:
+          name: Display the LoadBalancer's DNS name
+          command: |
+            cat ~/inventory.txt
+            cd ansible
+            ansible-playbook -i ~/inventory.txt save-elb-dns.yml
+            cat ~/elb_dns.txt
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - elb_dns.txt
+      - destroy-eks:
+          id: ${CIRCLE_WORKFLOW_ID}
+          when: on_fail
+
+  deploy-docker:
+    executor: python
+    steps:
+      - checkout
+      - aws-cli/setup
+      - add_ssh_keys:
+          fingerprints:
+            - "96:49:d4:d1:f4:af:c9:72:93:f1:9f:5a:ff:c3:a1:7e"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+      - run:
+          name: Deploy newest Docker Image
+          command: |
+            cat ~/inventory.txt
+            cd ansible
+            ansible-playbook -i ~/inventory.txt deploy-app.yml
+          no_output_timeout: 2m
+      - destroy-eks:
+          id: ${CIRCLE_WORKFLOW_ID}
+          when: on_fail
+
+workflows:
+  default:
+    jobs:
+      - integration
+      - docker/publish:
+          requires:
+            - integration
+          filters:
+            branches:
+              only: master
+          image: $DOCKER_LOGIN/hello-world
+          path: app
+          docker-context: app
+          deploy: true
+          tag: "latest"
+          update-description: true
+      - deploy-infrastructure:
+          filters:
+            branches:
+              only: master
+      - configure-infrastructure:
+          requires:
+            - deploy-infrastructure
+      - configure-cluster:
+          requires:
+            - configure-infrastructure
+            - docker/publish
+      - deploy-docker:
+          requires:
+            - configure-cluster

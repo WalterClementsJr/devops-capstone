@@ -1,0 +1,5 @@
+[
+  "EnvironmentName=hello-world",
+  "KeyPairName=yourKey",
+  "imageId=ami-0261755bbcb8c4a84"
+]
